@@ -1,0 +1,96 @@
+(ns refining.store-contract-test
+  "The Store contract, run against BOTH backends. Proving MemStore and
+  the Datomic-backed (langchain.db) store satisfy the same contract is
+  what makes 'swap the SSoT for Datomic / kotoba-server' a
+  configuration change, not a rewrite -- see `cloud-itonami-isic-6511`'s
+  `underwriting.store-contract-test` for the same pattern on the
+  sibling actor."
+  (:require [clojure.test :refer [deftest is testing]]
+            [refining.store :as store]))
+
+(defn- backends []
+  [["MemStore" (store/seed-db)] ["DatomicStore" (store/datomic-seed-db)]])
+
+(deftest read-parity
+  (doseq [[label s] (backends)]
+    (testing label
+      (is (= "JPN" (:jurisdiction (store/refinery-batch s "batch-1"))))
+      (is (= "Akita Petroleum Co" (:operator (store/refinery-batch s "batch-1"))))
+      (is (= 35 (:api-gravity-in (store/refinery-batch s "batch-1"))))
+      (is (= {:required 0.85 :actual 0.90} (:target-yields (store/refinery-batch s "batch-1")))
+          "target-yields compound map round-trips")
+      (is (= "ATL" (:jurisdiction (store/refinery-batch s "batch-2"))))
+      (is (= 450.0 (:unit-temp-celsius-actual (store/refinery-batch s "batch-3"))) "batch-3 unit-temp out of range")
+      (is (= 6.0 (:unit-pressure-mpa-actual (store/refinery-batch s "batch-4"))) "batch-4 unit-pressure out of range")
+      (is (true? (:contamination-flag-raised? (store/refinery-batch s "batch-5"))))
+      (is (false? (:contamination-flag-resolved? (store/refinery-batch s "batch-5"))))
+      (is (false? (:flare-operational? (store/refinery-batch s "batch-6"))) "batch-6 flare inoperational")
+      (is (= 0.70 (:actual (:target-yields (store/refinery-batch s "batch-7")))) "batch-7 yield insufficient")
+      (is (false? (:processed? (store/refinery-batch s "batch-1"))))
+      (is (false? (:yield-finalized? (store/refinery-batch s "batch-1"))))
+      (is (= ["batch-1" "batch-2" "batch-3" "batch-4" "batch-5" "batch-6" "batch-7"]
+             (mapv :id (store/all-refinery-batches s))))
+      (is (nil? (store/assay-of s "batch-1")))
+      (is (= [] (store/ledger s)))
+      (is (= [] (store/process-history s)))
+      (is (= [] (store/yield-history s)))
+      (is (zero? (store/next-process-sequence s "JPN")))
+      (is (zero? (store/next-yield-sequence s "JPN")))
+      (is (false? (store/refinery-batch-already-processed? s "batch-1")))
+      (is (false? (store/refinery-batch-already-yielded? s "batch-1"))))))
+
+(deftest write-and-ledger-parity
+  (doseq [[label s] (backends)]
+    (testing label
+      (testing "partial upsert merges, preserving untouched fields"
+        (store/commit-record! s {:effect :batch/upsert
+                                 :value {:id "batch-1" :operator "Akita Petroleum Co"}})
+        (is (= "Akita Petroleum Co" (:operator (store/refinery-batch s "batch-1"))))
+        (is (= "JPN" (:jurisdiction (store/refinery-batch s "batch-1"))) "unrelated field preserved"))
+      (testing "assay payloads commit and read back"
+        (store/commit-record! s {:effect :assay/set :path ["batch-1"]
+                                 :payload {:jurisdiction "JPN" :checklist ["a" "b"]}})
+        (is (= {:jurisdiction "JPN" :checklist ["a" "b"]} (store/assay-of s "batch-1"))))
+      (testing "unit process drafts a record and advances the process sequence"
+        (store/commit-record! s {:effect :unit/mark-processed :path ["batch-1"]})
+        (is (= "JPN-PROCESS-000000" (get (first (store/process-history s)) "record_id")))
+        (is (= "process-record-draft" (get (first (store/process-history s)) "kind")))
+        (is (true? (:processed? (store/refinery-batch s "batch-1"))))
+        (is (= 1 (count (store/process-history s))))
+        (is (= 1 (store/next-process-sequence s "JPN")))
+        (is (true? (store/refinery-batch-already-processed? s "batch-1"))))
+      (testing "product yield drafts a record and advances the yield sequence"
+        (store/commit-record! s {:effect :product/mark-yielded :path ["batch-1"]})
+        (is (= "JPN-YIELD-000000" (get (first (store/yield-history s)) "record_id")))
+        (is (= "yield-record-draft" (get (first (store/yield-history s)) "kind")))
+        (is (true? (:yield-finalized? (store/refinery-batch s "batch-1"))))
+        (is (= 1 (count (store/yield-history s))))
+        (is (= 1 (store/next-yield-sequence s "JPN")))
+        (is (true? (store/refinery-batch-already-yielded? s "batch-1"))))
+      (testing "ledger is append-only and order-preserving"
+        (store/append-ledger! s {:op :a :disposition :commit})
+        (store/append-ledger! s {:op :b :disposition :hold})
+        (is (= [:commit :hold] (mapv :disposition (store/ledger s))))))))
+
+(deftest datomic-empty-store-is-usable
+  (let [s (store/datomic-store)]
+    (is (nil? (store/refinery-batch s "nope")))
+    (is (= [] (store/all-refinery-batches s)))
+    (is (= [] (store/ledger s)))
+    (is (= [] (store/process-history s)))
+    (is (= [] (store/yield-history s)))
+    (is (zero? (store/next-process-sequence s "JPN")))
+    (is (zero? (store/next-yield-sequence s "JPN")))
+    (store/with-refinery-batches s {"x" {:id "x" :refinery-name "Negishi" :operator "c"
+                                         :api-gravity-in 35 :sulfur-in 1.5
+                                         :target-yields {:required 0.85 :actual 0.90}
+                                         :unit-temp-celsius-actual 370.0
+                                         :unit-temp-min 350.0 :unit-temp-max 400.0
+                                         :unit-pressure-mpa-actual 3.0
+                                         :unit-pressure-min 1.0 :unit-pressure-max 5.0
+                                         :flare-operational? true
+                                         :contamination-flag-raised? false :contamination-flag-resolved? false
+                                         :processed? false :yield-finalized? false
+                                         :jurisdiction "JPN" :status :intake}})
+    (is (= "c" (:operator (store/refinery-batch s "x"))))
+    (is (= {:required 0.85 :actual 0.90} (:target-yields (store/refinery-batch s "x"))))))

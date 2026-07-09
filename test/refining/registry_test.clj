@@ -1,0 +1,79 @@
+(ns refining.registry-test
+  (:require [clojure.test :refer [deftest is]]
+            [refining.registry :as r]))
+
+;; ----------------------------- range-check pure functions -----------------------------
+
+(deftest unit-temp-two-sided-window
+  (is (not (r/unit-temp-out-of-range? 370.0 350.0 400.0)) "in-window -> ok")
+  (is (not (r/unit-temp-out-of-range? 350.0 350.0 400.0)) "at min boundary -> ok")
+  (is (not (r/unit-temp-out-of-range? 400.0 350.0 400.0)) "at max boundary -> ok")
+  (is (r/unit-temp-out-of-range? 450.0 350.0 400.0) "above max -> out of range")
+  (is (r/unit-temp-out-of-range? 300.0 350.0 400.0) "below min -> out of range")
+  (is (r/unit-temp-out-of-range? nil 350.0 400.0) "missing actual -> unsafe")
+  (is (r/unit-temp-out-of-range? 370.0 nil 400.0) "missing min -> unsafe"))
+
+(deftest unit-pressure-two-sided-window
+  (is (not (r/unit-pressure-out-of-range? 3.0 1.0 5.0)) "in-window -> ok")
+  (is (not (r/unit-pressure-out-of-range? 1.0 1.0 5.0)) "at min boundary -> ok")
+  (is (not (r/unit-pressure-out-of-range? 5.0 1.0 5.0)) "at max boundary -> ok")
+  (is (r/unit-pressure-out-of-range? 6.0 1.0 5.0) "above max -> out of range")
+  (is (r/unit-pressure-out-of-range? 0.5 1.0 5.0) "below min -> out of range")
+  (is (r/unit-pressure-out-of-range? nil 1.0 5.0) "missing actual -> unsafe")
+  (is (r/unit-pressure-out-of-range? 3.0 nil 5.0) "missing min -> unsafe"))
+
+(deftest yield-rate-vs-required
+  (is (not (r/yield-rate-insufficient? 0.90 0.85)) "above required -> ok")
+  (is (not (r/yield-rate-insufficient? 0.85 0.85)) "at required -> ok")
+  (is (r/yield-rate-insufficient? 0.70 0.85) "below required -> insufficient")
+  (is (r/yield-rate-insufficient? nil 0.85) "missing actual -> unsafe")
+  (is (r/yield-rate-insufficient? 0.90 nil) "missing required -> unsafe"))
+
+;; ----------------------------- register-process-record -----------------------------
+
+(deftest process-is-a-draft-not-a-real-process
+  (let [result (r/register-process-record "batch-1" "JPN" 0)]
+    (is (nil? (get-in result ["certificate" "proof"])))
+    (is (= (get-in result ["certificate" "issued_by_registry"]) false))
+    (is (= (get-in result ["certificate" "status"]) "draft-unsigned"))))
+
+(deftest process-assigns-process-number
+  (let [result (r/register-process-record "batch-1" "JPN" 7)]
+    (is (= (get result "process_number") "JPN-PROCESS-000007"))
+    (is (= (get-in result ["record" "refinery_batch_id"]) "batch-1"))
+    (is (= (get-in result ["record" "kind"]) "process-record-draft"))
+    (is (= (get-in result ["record" "immutable"]) true))))
+
+(deftest process-validation-rules
+  (is (thrown? Exception (r/register-process-record "" "JPN" 0)))
+  (is (thrown? Exception (r/register-process-record "batch-1" "" 0)))
+  (is (thrown? Exception (r/register-process-record "batch-1" "JPN" -1))))
+
+;; ----------------------------- register-yield-record -----------------------------
+
+(deftest yield-is-a-draft-not-a-real-yield
+  (let [result (r/register-yield-record "batch-1" "JPN" 0)]
+    (is (nil? (get-in result ["certificate" "proof"])))
+    (is (= (get-in result ["certificate" "issued_by_registry"]) false))
+    (is (= (get-in result ["certificate" "status"]) "draft-unsigned"))))
+
+(deftest yield-assigns-yield-number
+  (let [result (r/register-yield-record "batch-1" "JPN" 7)]
+    (is (= (get result "yield_number") "JPN-YIELD-000007"))
+    (is (= (get-in result ["record" "refinery_batch_id"]) "batch-1"))
+    (is (= (get-in result ["record" "kind"]) "yield-record-draft"))
+    (is (= (get-in result ["record" "immutable"]) true))))
+
+(deftest yield-validation-rules
+  (is (thrown? Exception (r/register-yield-record "" "JPN" 0)))
+  (is (thrown? Exception (r/register-yield-record "batch-1" "" 0)))
+  (is (thrown? Exception (r/register-yield-record "batch-1" "JPN" -1))))
+
+(deftest history-is-append-only
+  (let [c1 (r/register-process-record "batch-1" "JPN" 0)
+        hist (r/append [] c1)
+        c2 (r/register-process-record "batch-2" "JPN" 1)
+        hist2 (r/append hist c2)]
+    (is (= 2 (count hist2)))
+    (is (= "JPN-PROCESS-000000" (get-in hist2 [0 "record_id"])))
+    (is (= "JPN-PROCESS-000001" (get-in hist2 [1 "record_id"])))))

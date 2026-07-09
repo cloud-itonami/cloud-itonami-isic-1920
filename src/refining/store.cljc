@@ -1,0 +1,387 @@
+(ns refining.store
+  "SSoT for the petroleum-refining actor, behind a `Store` protocol so
+  the backend is a swap, not a rewrite -- the same seam every prior
+  `cloud-itonami-isic-*` actor in this fleet uses.
+
+    - `MemStore`     -- atom of EDN. The deterministic default for
+                        dev/tests/demo (no deps).
+    - `DatomicStore` -- backed by `langchain.db`, a Datomic-API-compatible
+                        EAV store (datalog q / pull / upsert). Pure `.cljc`,
+                        so it runs offline AND can be pointed at a real
+                        Datomic Local or a kotoba-server pod by swapping
+                        `langchain.db`'s `:db-api` (see langchain.kotoba-db).
+
+  Both implement the same protocol and pass the same contract
+  (test/refining/store_contract_test.clj), which is the whole point:
+  the actor, the Refinery Safety Governor and the audit ledger never know
+  which SSoT they run on.
+
+  Unlike `retailops`/4711's own `order` entity (distinguished by
+  `:kind`), this vertical's `process` and `yield` actuation events
+  apply SEQUENTIALLY to the SAME `refinery-batch` -- a unit process
+  happens first (crude charged and run through the distillation/
+  reformer unit), product yield happens later (on-spec product finalized
+  and custody-transferred), on the same batch record. This matches the
+  repair-shop cluster's own `ticket` shape more closely (two real-world
+  acts, in order, on one entity), with dedicated double-actuation-guard
+  booleans (`:processed?`/`:yield-finalized?`, never a `:status` value).
+
+  The ledger stays append-only on every backend: 'which batch was
+  screened for a unit temperature outside its safe window, a unit
+  pressure outside its safe window, an insufficient yield rate, an
+  inoperational flare (overpressure relief path unavailable), or an
+  unresolved contamination flag, which batch had a unit processed,
+  which product was yielded, on what jurisdictional basis, approved by
+  whom' is always a query over an immutable log -- the audit trail a
+  regulator, a customer, or an operator trusting a refining actor
+  needs, and the evidence an operator needs if a process or a yield is
+  later disputed."
+  (:require #?(:clj  [clojure.edn :as edn]
+               :cljs [cljs.reader :as edn])
+            [refining.registry :as registry]
+            [langchain.db :as d]))
+
+(defprotocol Store
+  (refinery-batch [s id])
+  (all-refinery-batches [s])
+  (assay-of [s refinery-batch-id] "committed assay/verification, or nil")
+  (ledger [s])
+  (process-history [s] "the append-only unit-process history (refining.registry drafts)")
+  (yield-history [s] "the append-only product-yield history (refining.registry drafts)")
+  (next-process-sequence [s jurisdiction] "next process-number sequence for a jurisdiction")
+  (next-yield-sequence [s jurisdiction] "next yield-number sequence for a jurisdiction")
+  (refinery-batch-already-processed? [s refinery-batch-id] "has this batch already been processed?")
+  (refinery-batch-already-yielded? [s refinery-batch-id] "has this batch's product already been yielded?")
+  (commit-record! [s record] "apply a committed op's record to the SSoT")
+  (append-ledger! [s fact]   "append one immutable decision fact")
+  (with-refinery-batches [s batches] "replace/seed the batch directory (map id->batch)"))
+
+;; ----------------------------- demo data -----------------------------
+
+(defn demo-data
+  "A small, self-contained refinery-batch set covering both actuation
+  lifecycles (process, yield) plus the governor's own refinery-safety
+  checks, so the actor + tests run offline. Each violation batch
+  isolates exactly ONE failure mode (the rest stay clean) following the
+  'exercise the failure mode directly, never only via a happy-path
+  actuation' discipline every sibling governor's demo data establishes."
+  []
+  {:refinery-batches
+   {"batch-1" {:id "batch-1" :refinery-name "Negishi" :operator "Akita Petroleum Co"
+               :api-gravity-in 35 :sulfur-in 1.5
+               :target-yields {:required 0.85 :actual 0.90}
+               :unit-temp-celsius-actual 370.0
+               :unit-temp-min 350.0 :unit-temp-max 400.0
+               :unit-pressure-mpa-actual 3.0
+               :unit-pressure-min 1.0 :unit-pressure-max 5.0
+               :flare-operational? true
+               :contamination-flag-raised? false :contamination-flag-resolved? false
+               :processed? false :yield-finalized? false
+               :jurisdiction "JPN" :status :intake}
+    "batch-2" {:id "batch-2" :refinery-name "Negishi" :operator "Akita Petroleum Co"
+               :api-gravity-in 35 :sulfur-in 1.5
+               :target-yields {:required 0.85 :actual 0.90}
+               :unit-temp-celsius-actual 370.0
+               :unit-temp-min 350.0 :unit-temp-max 400.0
+               :unit-pressure-mpa-actual 3.0
+               :unit-pressure-min 1.0 :unit-pressure-max 5.0
+               :flare-operational? true
+               :contamination-flag-raised? false :contamination-flag-resolved? false
+               :processed? false :yield-finalized? false
+               :jurisdiction "ATL" :status :intake}
+    "batch-3" {:id "batch-3" :refinery-name "Negishi" :operator "Akita Petroleum Co"
+               :api-gravity-in 35 :sulfur-in 1.5
+               :target-yields {:required 0.85 :actual 0.90}
+               :unit-temp-celsius-actual 450.0
+               :unit-temp-min 350.0 :unit-temp-max 400.0
+               :unit-pressure-mpa-actual 3.0
+               :unit-pressure-min 1.0 :unit-pressure-max 5.0
+               :flare-operational? true
+               :contamination-flag-raised? false :contamination-flag-resolved? false
+               :processed? false :yield-finalized? false
+               :jurisdiction "JPN" :status :intake}
+    "batch-4" {:id "batch-4" :refinery-name "Negishi" :operator "Akita Petroleum Co"
+               :api-gravity-in 35 :sulfur-in 1.5
+               :target-yields {:required 0.85 :actual 0.90}
+               :unit-temp-celsius-actual 370.0
+               :unit-temp-min 350.0 :unit-temp-max 400.0
+               :unit-pressure-mpa-actual 6.0
+               :unit-pressure-min 1.0 :unit-pressure-max 5.0
+               :flare-operational? true
+               :contamination-flag-raised? false :contamination-flag-resolved? false
+               :processed? false :yield-finalized? false
+               :jurisdiction "JPN" :status :intake}
+    "batch-5" {:id "batch-5" :refinery-name "Negishi" :operator "Akita Petroleum Co"
+               :api-gravity-in 35 :sulfur-in 1.5
+               :target-yields {:required 0.85 :actual 0.90}
+               :unit-temp-celsius-actual 370.0
+               :unit-temp-min 350.0 :unit-temp-max 400.0
+               :unit-pressure-mpa-actual 3.0
+               :unit-pressure-min 1.0 :unit-pressure-max 5.0
+               :flare-operational? true
+               :contamination-flag-raised? true :contamination-flag-resolved? false
+               :processed? false :yield-finalized? false
+               :jurisdiction "JPN" :status :intake}
+    "batch-6" {:id "batch-6" :refinery-name "Negishi" :operator "Akita Petroleum Co"
+               :api-gravity-in 35 :sulfur-in 1.5
+               :target-yields {:required 0.85 :actual 0.90}
+               :unit-temp-celsius-actual 370.0
+               :unit-temp-min 350.0 :unit-temp-max 400.0
+               :unit-pressure-mpa-actual 3.0
+               :unit-pressure-min 1.0 :unit-pressure-max 5.0
+               :flare-operational? false
+               :contamination-flag-raised? false :contamination-flag-resolved? false
+               :processed? false :yield-finalized? false
+               :jurisdiction "JPN" :status :intake}
+    "batch-7" {:id "batch-7" :refinery-name "Negishi" :operator "Akita Petroleum Co"
+               :api-gravity-in 35 :sulfur-in 1.5
+               :target-yields {:required 0.85 :actual 0.70}
+               :unit-temp-celsius-actual 370.0
+               :unit-temp-min 350.0 :unit-temp-max 400.0
+               :unit-pressure-mpa-actual 3.0
+               :unit-pressure-min 1.0 :unit-pressure-max 5.0
+               :flare-operational? true
+               :contamination-flag-raised? false :contamination-flag-resolved? false
+               :processed? false :yield-finalized? false
+               :jurisdiction "JPN" :status :intake}}})
+
+;; ----------------------------- shared commit logic -----------------------------
+
+(defn- process-batch!
+  "Backend-agnostic `:unit/mark-processed` -- looks up the batch via the
+  protocol and drafts the refinery-process record, and returns {:result
+  .. :batch-patch ..} for the caller to persist."
+  [s batch-id]
+  (let [b (refinery-batch s batch-id)
+        seq-n (next-process-sequence s (:jurisdiction b))
+        result (registry/register-process-record batch-id (:jurisdiction b) seq-n)]
+    {:result result
+     :batch-patch {:processed? true
+                   :process-number (get result "process_number")}}))
+
+(defn- yield-batch!
+  "Backend-agnostic `:product/mark-yielded` -- looks up the batch via the
+  protocol and drafts the product-yield record, and returns {:result ..
+  :batch-patch ..} for the caller to persist."
+  [s batch-id]
+  (let [b (refinery-batch s batch-id)
+        seq-n (next-yield-sequence s (:jurisdiction b))
+        result (registry/register-yield-record batch-id (:jurisdiction b) seq-n)]
+    {:result result
+     :batch-patch {:yield-finalized? true
+                   :yield-number (get result "yield_number")}}))
+
+;; ----------------------------- MemStore (default) -----------------------------
+
+(defrecord MemStore [a]
+  Store
+  (refinery-batch [_ id] (get-in @a [:refinery-batches id]))
+  (all-refinery-batches [_] (sort-by :id (vals (:refinery-batches @a))))
+  (assay-of [_ batch-id] (get-in @a [:assays batch-id]))
+  (ledger [_] (:ledger @a))
+  (process-history [_] (:processes @a))
+  (yield-history [_] (:yields @a))
+  (next-process-sequence [_ jurisdiction] (get-in @a [:process-sequences jurisdiction] 0))
+  (next-yield-sequence [_ jurisdiction] (get-in @a [:yield-sequences jurisdiction] 0))
+  (refinery-batch-already-processed? [_ batch-id] (boolean (get-in @a [:refinery-batches batch-id :processed?])))
+  (refinery-batch-already-yielded? [_ batch-id] (boolean (get-in @a [:refinery-batches batch-id :yield-finalized?])))
+  (commit-record! [s {:keys [effect path value payload]}]
+    (case effect
+      :batch/upsert
+      (swap! a update-in [:refinery-batches (:id value)] merge value)
+
+      :assay/set
+      (swap! a assoc-in [:assays (first path)] payload)
+
+      :unit/mark-processed
+      (let [batch-id (first path)
+            {:keys [result batch-patch]} (process-batch! s batch-id)
+            jurisdiction (:jurisdiction (refinery-batch s batch-id))]
+        (swap! a (fn [state]
+                   (-> state
+                       (update-in [:process-sequences jurisdiction] (fnil inc 0))
+                       (update-in [:refinery-batches batch-id] merge batch-patch)
+                       (update :processes registry/append result))))
+        result)
+
+      :product/mark-yielded
+      (let [batch-id (first path)
+            {:keys [result batch-patch]} (yield-batch! s batch-id)
+            jurisdiction (:jurisdiction (refinery-batch s batch-id))]
+        (swap! a (fn [state]
+                   (-> state
+                       (update-in [:yield-sequences jurisdiction] (fnil inc 0))
+                       (update-in [:refinery-batches batch-id] merge batch-patch)
+                       (update :yields registry/append result))))
+        result)
+      nil)
+    s)
+  (append-ledger! [_ fact] (swap! a update :ledger conj fact) fact)
+  (with-refinery-batches [s batches] (when (seq batches) (swap! a assoc :refinery-batches batches)) s))
+
+(defn seed-db
+  "A MemStore seeded with the demo batch set. The deterministic default."
+  []
+  (->MemStore (atom (assoc (demo-data)
+                           :assays {}
+                           :ledger [] :process-sequences {} :processes []
+                           :yield-sequences {} :yields []))))
+
+;; ----------------------------- DatomicStore (langchain.db) -----------------------------
+
+(def ^:private schema
+  "DataScript/Datomic-style schema: only constraint attrs are declared.
+  Map/compound values (assay payloads, ledger facts, process/yield
+  records, the target-yields map) are stored as EDN strings so
+  `langchain.db` doesn't expand them into sub-entities -- the same
+  convention every sibling actor's store uses."
+  {:refinery-batch/id                          {:db/unique :db.unique/identity}
+   :assay/refinery-batch-id                    {:db/unique :db.unique/identity}
+   :ledger/seq                                 {:db/unique :db.unique/identity}
+   :process/seq                                {:db/unique :db.unique/identity}
+   :yield/seq                                  {:db/unique :db.unique/identity}
+   :process-sequence/jurisdiction              {:db/unique :db.unique/identity}
+   :yield-sequence/jurisdiction                {:db/unique :db.unique/identity}})
+
+(defn- enc [v] (pr-str v))
+(defn- dec* [s] (when s (edn/read-string s)))
+
+;; Every batch field is stored as its own Datomic attr so a governor
+;; pull reads the exact ground truth (no blob decode), EXCEPT target-
+;; yields which is a map and is stored EDN-encoded. Boolean fields are
+;; coerced on read so a missing attr reads back as false (parity with
+;; MemStore). [field-key tx-attr type] where type is false (scalar),
+;; true (boolean), or :compound (EDN-encoded map).
+(def ^:private batch-fields
+  [[:id :refinery-batch/id false]
+   [:refinery-name :refinery-batch/refinery-name false]
+   [:operator :refinery-batch/operator false]
+   [:api-gravity-in :refinery-batch/api-gravity-in false]
+   [:sulfur-in :refinery-batch/sulfur-in false]
+   [:target-yields :refinery-batch/target-yields :compound]
+   [:unit-temp-celsius-actual :refinery-batch/unit-temp-celsius-actual false]
+   [:unit-temp-min :refinery-batch/unit-temp-min false]
+   [:unit-temp-max :refinery-batch/unit-temp-max false]
+   [:unit-pressure-mpa-actual :refinery-batch/unit-pressure-mpa-actual false]
+   [:unit-pressure-min :refinery-batch/unit-pressure-min false]
+   [:unit-pressure-max :refinery-batch/unit-pressure-max false]
+   [:flare-operational? :refinery-batch/flare-operational? true]
+   [:contamination-flag-raised? :refinery-batch/contamination-flag-raised? true]
+   [:contamination-flag-resolved? :refinery-batch/contamination-flag-resolved? true]
+   [:processed? :refinery-batch/processed? true]
+   [:yield-finalized? :refinery-batch/yield-finalized? true]
+   [:jurisdiction :refinery-batch/jurisdiction false]
+   [:status :refinery-batch/status false]
+   [:process-number :refinery-batch/process-number false]
+   [:yield-number :refinery-batch/yield-number false]])
+
+(defn- batch->tx [b]
+  (reduce (fn [tx [k attr type]]
+            (let [v (get b k)
+                  v* (if (= :compound type) (enc v) v)]
+              (cond-> tx (some? v) (assoc attr v*))))
+          {:refinery-batch/id (:id b)}
+          batch-fields))
+
+(def ^:private batch-pull (mapv second batch-fields))
+
+(defn- pull->batch [m]
+  (when (:refinery-batch/id m)
+    (reduce (fn [b [k attr type]]
+              (let [v (get m attr)]
+                (cond
+                  (true? type)   (assoc b k (boolean v))
+                  (= :compound type) (if v (assoc b k (dec* v)) b)
+                  (some? v)      (assoc b k v)
+                  :else          b)))
+            {:id (:refinery-batch/id m)}
+            batch-fields)))
+
+(defrecord DatomicStore [conn]
+  Store
+  (refinery-batch [_ id]
+    (pull->batch (d/pull (d/db conn) batch-pull [:refinery-batch/id id])))
+  (all-refinery-batches [_]
+    (->> (d/q '[:find [?id ...] :where [?e :refinery-batch/id ?id]] (d/db conn))
+         (map #(pull->batch (d/pull (d/db conn) batch-pull [:refinery-batch/id %])))
+         (sort-by :id)))
+  (assay-of [_ batch-id]
+    (dec* (d/q '[:find ?p . :in $ ?bid
+                :where [?a :assay/refinery-batch-id ?bid] [?a :assay/payload ?p]]
+              (d/db conn) batch-id)))
+  (ledger [_]
+    (->> (d/q '[:find ?s ?f :where [?e :ledger/seq ?s] [?e :ledger/fact ?f]] (d/db conn))
+         (sort-by first)
+         (mapv (comp dec* second))))
+  (process-history [_]
+    (->> (d/q '[:find ?s ?r :where [?e :process/seq ?s] [?e :process/record ?r]] (d/db conn))
+         (sort-by first)
+         (mapv (comp dec* second))))
+  (yield-history [_]
+    (->> (d/q '[:find ?s ?r :where [?e :yield/seq ?s] [?e :yield/record ?r]] (d/db conn))
+         (sort-by first)
+         (mapv (comp dec* second))))
+  (next-process-sequence [_ jurisdiction]
+    (or (d/q '[:find ?n . :in $ ?j
+              :where [?e :process-sequence/jurisdiction ?j] [?e :process-sequence/next ?n]]
+            (d/db conn) jurisdiction)
+        0))
+  (next-yield-sequence [_ jurisdiction]
+    (or (d/q '[:find ?n . :in $ ?j
+              :where [?e :yield-sequence/jurisdiction ?j] [?e :yield-sequence/next ?n]]
+            (d/db conn) jurisdiction)
+        0))
+  (refinery-batch-already-processed? [s batch-id]
+    (boolean (:processed? (refinery-batch s batch-id))))
+  (refinery-batch-already-yielded? [s batch-id]
+    (boolean (:yield-finalized? (refinery-batch s batch-id))))
+  (commit-record! [s {:keys [effect path value payload]}]
+    (case effect
+      :batch/upsert
+      (d/transact! conn [(batch->tx value)])
+
+      :assay/set
+      (d/transact! conn [{:assay/refinery-batch-id (first path) :assay/payload (enc payload)}])
+
+      :unit/mark-processed
+      (let [batch-id (first path)
+            {:keys [result batch-patch]} (process-batch! s batch-id)
+            jurisdiction (:jurisdiction (refinery-batch s batch-id))
+            next-n (inc (next-process-sequence s jurisdiction))]
+        (d/transact! conn
+                     [(batch->tx (assoc batch-patch :id batch-id))
+                      {:process-sequence/jurisdiction jurisdiction :process-sequence/next next-n}
+                      {:process/seq (count (process-history s)) :process/record (enc (get result "record"))}])
+        result)
+
+      :product/mark-yielded
+      (let [batch-id (first path)
+            {:keys [result batch-patch]} (yield-batch! s batch-id)
+            jurisdiction (:jurisdiction (refinery-batch s batch-id))
+            next-n (inc (next-yield-sequence s jurisdiction))]
+        (d/transact! conn
+                     [(batch->tx (assoc batch-patch :id batch-id))
+                      {:yield-sequence/jurisdiction jurisdiction :yield-sequence/next next-n}
+                      {:yield/seq (count (yield-history s)) :yield/record (enc (get result "record"))}])
+        result)
+      nil)
+    s)
+  (append-ledger! [s fact]
+    (d/transact! conn [{:ledger/seq (count (ledger s)) :ledger/fact (enc fact)}])
+    fact)
+  (with-refinery-batches [s batches]
+    (when (seq batches) (d/transact! conn (mapv batch->tx (vals batches)))) s))
+
+(defn datomic-store
+  "A DatomicStore (langchain.db backend) seeded from `data`
+  ({:refinery-batches ..}); empty when omitted."
+  ([] (datomic-store {}))
+  ([{:keys [refinery-batches]}]
+   (let [s (->DatomicStore (d/create-conn schema))]
+     (with-refinery-batches s refinery-batches))))
+
+(defn datomic-seed-db
+  "A DatomicStore seeded with the demo batch set -- the Datomic-backed
+  analog of `seed-db`, used to prove protocol parity."
+  []
+  (datomic-store (demo-data)))

@@ -1,0 +1,11 @@
+{:itonami.blueprint/id "cloud-itonami-isic-1920"
+ :itonami.blueprint/name "Petroleum refining"
+ :itonami.blueprint/isic-rev5 "1920"
+ :itonami.blueprint/domain :midstream/refining
+ :itonami.blueprint/license "AGPL-3.0-or-later"
+ :itonami.blueprint/social-impact [:safety :environmental-protection :transparency]
+ :itonami.blueprint/governor :refinery-safety-governor
+ :itonami.blueprint/required-technologies [:robotics :identity :forms :dmn :bpmn :audit-ledger :optimization]
+ :itonami.blueprint/status :public-oss
+ :itonami.blueprint/robotics true
+ :itonami.blueprint/maturity :implemented}
