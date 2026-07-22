@@ -10,13 +10,25 @@
   safety regime: Japan's METI / 消防庁 jurisdiction over high-pressure gas
   and petroleum-complex disaster prevention, the US OSHA Process Safety
   Management standard plus API RP 750, the UK HSE / Environment Agency
-  COMAH regime, and the Norwegian Petroleum Safety Authority's Activities
-  / Framework Regulations. The required-evidence set (crude-assay record,
-  unit-integrity inspection, pressure-relief device test record) mirrors
-  the process-safety information and mechanical-integrity evidence a
-  regulator actually demands before a refinery unit is charged and run;
-  these are the records the Texas City BP explosion (2005) and the
-  Buncefield fire (2005) after-action regimes made non-negotiable.
+  COMAH regime, the Norwegian Petroleum Safety Authority's Activities
+  / Framework Regulations, and Brazil's ANP (Agência Nacional do Petróleo,
+  Gás Natural e Biocombustíveis) refining-authorization regime under the
+  Lei do Petróleo (Lei nº 9.478/1997, art. 8º, V) and Resolução ANP nº
+  852/2021. The required-evidence set (crude-assay record, unit-integrity
+  inspection, pressure-relief device test record) mirrors the process-
+  safety information and mechanical-integrity evidence a regulator
+  actually demands before a refinery unit is charged and run; these are
+  the records the Texas City BP explosion (2005) and the Buncefield fire
+  (2005) after-action regimes made non-negotiable. For BRA specifically,
+  this required-evidence list is the same cross-jurisdiction G2 framework
+  applied to the other three entries (not an item-by-item citation to
+  Resolução ANP nº 852/2021's own text, which was not independently
+  fetched article-by-article this session) -- what IS independently
+  confirmed for BRA is that ANP is the statutory refining regulator and
+  that Resolução ANP nº 852/2021 is the instrument ANP's own published
+  guidance cites as governing refining-authorization applications; that
+  distinction is disclosed honestly rather than overclaiming a line-item
+  match to Brazilian regulatory text.
 
   Coverage is reported HONESTLY (see `coverage`), the same discipline
   every sibling actor's `facts` namespace uses: a jurisdiction not in
@@ -54,6 +66,13 @@
           :owner-authority "Petroleum Safety Authority Norway (PSA)"
           :legal-basis "Activities Regulations; Framework Regulations"
           :provenance "https://www.ptil.no/en/regulations/"
+          :required-evidence ["crude-assay record"
+                              "unit-integrity inspection"
+                              "pressure-relief device test record"]}
+   "BRA" {:name "BRA"
+          :owner-authority "Agência Nacional do Petróleo, Gás Natural e Biocombustíveis (ANP)"
+          :legal-basis "Lei do Petróleo (Lei nº 9.478/1997, art. 8º, V -- ANP's competence to authorize refining, confirmed against the current wording as amended by Lei nº 11.909/2009); Resolução ANP nº 852/2021 (the technical/economic/legal requirements an applicant must meet to obtain a refining authorization, per ANP's own published guidance)"
+          :provenance "https://www.gov.br/anp/pt-br/assuntos/producao-de-derivados-de-petroleo-e-processamento-de-gas-natural/producao-de-derivados-de-petroleo-e-processamento-de-gas-natural/refino-de-petroleo/autorizacoes-para-refino-de-petroleo"
           :required-evidence ["crude-assay record"
                               "unit-integrity inspection"
                               "pressure-relief device test record"]}})
