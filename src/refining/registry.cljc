@@ -31,7 +31,7 @@
   refinery batch or yielding real product itself (that is `refining.
   operation`'s `:unit/process`/`:product/yield`, always human-gated --
   see README `Actuation`)."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (defn- unsigned-certificate
   "Every certificate this actor produces is UNSIGNED -- signature is
@@ -123,7 +123,7 @@
     (throw (ex-info "process: jurisdiction required" {})))
   (when (< sequence 0)
     (throw (ex-info "process: sequence must be >= 0" {})))
-  (let [process-number (str (str/upper-case jurisdiction) "-PROCESS-" (zero-pad sequence 6))
+  (let [process-number (str (str/upper jurisdiction) "-PROCESS-" (zero-pad sequence 6))
         record {"record_id" process-number
                 "kind" "process-record-draft"
                 "refinery_batch_id" refinery-batch-id
@@ -148,7 +148,7 @@
     (throw (ex-info "yield: jurisdiction required" {})))
   (when (< sequence 0)
     (throw (ex-info "yield: sequence must be >= 0" {})))
-  (let [yield-number (str (str/upper-case jurisdiction) "-YIELD-" (zero-pad sequence 6))
+  (let [yield-number (str (str/upper jurisdiction) "-YIELD-" (zero-pad sequence 6))
         record {"record_id" yield-number
                 "kind" "yield-record-draft"
                 "refinery_batch_id" refinery-batch-id
