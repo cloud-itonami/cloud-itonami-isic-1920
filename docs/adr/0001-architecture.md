@@ -135,7 +135,7 @@ discipline every prior governor's guards establish, informed by
 `refining.store/Store` is implemented by both `MemStore` (atom-backed,
 default for dev/tests/demo) and `DatomicStore` (`langchain.db`-backed),
 proven to satisfy the same contract in
-`test/refining/store_contract_test.clj`. The ledger stays append-only
+`test/refining/store_contract_test.cljk`. The ledger stays append-only
 on every backend: which batch was screened for a unit temperature
 outside its window, a unit pressure outside its window, an insufficient
 yield rate, an inoperational flare (overpressure-relief path
@@ -196,7 +196,7 @@ a batch or auto-yield product.
   flare/overpressure-relief gate -- the flare gate is the one genuinely
   domain-new check, documented as such.
 - `MemStore` || `DatomicStore` parity is proven by
-  `test/refining/store_contract_test.clj`.
+  `test/refining/store_contract_test.cljk`.
 - 39 tests / 204 assertions pass; lint is clean; the demo
   (`clojure -M:dev:run`) walks one clean process + yield lifecycle, plus
   eight HARD-hold scenarios (no spec-basis, unit temperature, unit

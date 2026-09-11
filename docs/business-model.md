@@ -66,7 +66,7 @@ be yielded." Every rule it enforces is traceable to the domain
 `:environmental-protection`, `:transparency`).
 
 This is the rule the companion contract test
-(`test/refining/governor_contract_test.clj`) encodes end-to-end: the
+(`test/refining/governor_contract_test.cljk`) encodes end-to-end: the
 RefiningAdvisor never processes a batch or yields product the Refinery
 Safety Governor would reject, `:unit/process` and `:product/yield`
 NEVER auto-commit at any phase, `:batch/intake` (no direct capital
