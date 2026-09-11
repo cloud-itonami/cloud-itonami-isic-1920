@@ -1,5 +1,5 @@
 (ns refining.sim
-  "Demo driver -- `clojure -M:dev:run`. Walks a clean refinery batch
+  "Demo driver -- `kbb -M:dev:run`. Walks a clean refinery batch
   through intake -> assay verification -> unit process (escalate/
   approve/commit) -> product yield (escalate/approve/commit), then
   shows HARD-hold scenarios: a jurisdiction with no spec-basis, a unit
