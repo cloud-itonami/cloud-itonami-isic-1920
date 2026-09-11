@@ -74,7 +74,7 @@ product are never autonomous, at any phase, by construction.** Two
 independent layers enforce this (`refining.governor`'s `:unit/process`/
 `:product/yield` high-stakes gate and `refining.phase`'s phase table,
 which never puts either op in any phase's `:auto` set) -- see
-`refining.phase`'s docstring and `test/refining/phase_test.clj`'s
+`refining.phase`'s docstring and `test/refining/phase_test.cljk`'s
 `unit-process-never-auto-at-any-phase`/`product-yield-never-auto-at-
 any-phase`. The actor may draft, check and recommend; a human shift
 superintendent is always the one who actually charges a unit or
@@ -175,14 +175,14 @@ dmn/bpmn/audit-ledger stack.
 
 | File | Role |
 |---|---|
-| `src/refining/store.cljc` | **Store** protocol -- `MemStore` ‖ `DatomicStore` (`langchain.db`) + append-only audit ledger + process AND yield history (dual history). The double-actuation guard checks dedicated `:processed?`/`:yield-finalized?` booleans rather than a `:status` value |
-| `src/refining/registry.cljc` | Process/yield draft records, plus the self-contained refinery-safety range-check pure functions (`unit-temp-out-of-range?`, `unit-pressure-out-of-range?`, `yield-rate-insufficient?`) the governor re-verifies against -- no external capability library to delegate to |
-| `src/refining/facts.cljc` | Per-jurisdiction refinery process-safety / major-accident-hazard catalog with an official spec-basis citation, honest coverage reporting |
-| `src/refining/refiningadvisor.cljc` | **RefiningAdvisor** -- `mock-advisor` ‖ `llm-advisor`; intake/assay-verification/process/yield proposals |
-| `src/refining/governor.cljc` | **Refinery Safety Governor** -- 7 HARD checks (spec-basis · evidence-incomplete · unit-temp-out-of-range, the aerospace two-sided-tolerance discipline · unit-pressure-out-of-range, the aerospace two-sided-tolerance discipline · yield-rate-insufficient, the fabrication ratio discipline · contamination-flag-unresolved · flare-system-inoperational) + 2 double-actuation guards + 1 soft (confidence/actuation gate) |
-| `src/refining/phase.cljc` | **Phase 0→3** -- read-only → assisted intake → assisted verify → supervised (process/yield always human; batch intake is the ONLY auto-eligible op, no direct capital risk) |
-| `src/refining/operation.cljc` | **OperationActor** -- langgraph StateGraph |
-| `src/refining/sim.cljc` | demo driver |
+| `src/refining/store.cljk` | **Store** protocol -- `MemStore` ‖ `DatomicStore` (`langchain.db`) + append-only audit ledger + process AND yield history (dual history). The double-actuation guard checks dedicated `:processed?`/`:yield-finalized?` booleans rather than a `:status` value |
+| `src/refining/registry.cljk` | Process/yield draft records, plus the self-contained refinery-safety range-check pure functions (`unit-temp-out-of-range?`, `unit-pressure-out-of-range?`, `yield-rate-insufficient?`) the governor re-verifies against -- no external capability library to delegate to |
+| `src/refining/facts.cljk` | Per-jurisdiction refinery process-safety / major-accident-hazard catalog with an official spec-basis citation, honest coverage reporting |
+| `src/refining/refiningadvisor.cljk` | **RefiningAdvisor** -- `mock-advisor` ‖ `llm-advisor`; intake/assay-verification/process/yield proposals |
+| `src/refining/governor.cljk` | **Refinery Safety Governor** -- 7 HARD checks (spec-basis · evidence-incomplete · unit-temp-out-of-range, the aerospace two-sided-tolerance discipline · unit-pressure-out-of-range, the aerospace two-sided-tolerance discipline · yield-rate-insufficient, the fabrication ratio discipline · contamination-flag-unresolved · flare-system-inoperational) + 2 double-actuation guards + 1 soft (confidence/actuation gate) |
+| `src/refining/phase.cljk` | **Phase 0→3** -- read-only → assisted intake → assisted verify → supervised (process/yield always human; batch intake is the ONLY auto-eligible op, no direct capital risk) |
+| `src/refining/operation.cljk` | **OperationActor** -- langgraph StateGraph |
+| `src/refining/sim.cljk` | demo driver |
 | `test/refining/*_test.clj` | governor contract · phase invariants · store parity · registry conformance · facts coverage |
 
 ## Business-process coverage (honest)
