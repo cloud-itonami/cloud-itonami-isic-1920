@@ -95,12 +95,12 @@ with an inoperational flare or a suppressed contamination flag, a yield
 finalized below its required fraction, or a yield posted without a human
 sign-off.
 
-## Feel the Decision Gate: `clojure -M:dev:run`
+## Feel the Decision Gate: `kbb -M:dev:run`
 
 This vertical has no companion playable prototype yet (unlike the
 freight sibling's `itonami/freight-dispatch` game). The fastest hands-on
 way to feel why the `:refinery-safety-governor` gate exists is the
-bundled demo (`clojure -M:dev:run`), which walks one clean batch through
+bundled demo (`kbb -M:dev:run`), which walks one clean batch through
 intake → verify → process → yield (each process/yield pausing for human
 approval) and then exercises every HARD-hold failure mode in isolation:
 

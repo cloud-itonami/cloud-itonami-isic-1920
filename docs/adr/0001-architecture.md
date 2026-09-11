@@ -198,7 +198,7 @@ a batch or auto-yield product.
 - `MemStore` || `DatomicStore` parity is proven by
   `test/refining/store_contract_test.cljk`.
 - 39 tests / 204 assertions pass; lint is clean; the demo
-  (`clojure -M:dev:run`) walks one clean process + yield lifecycle, plus
+  (`kbb -M:dev:run`) walks one clean process + yield lifecycle, plus
   eight HARD-hold scenarios (no spec-basis, unit temperature, unit
   pressure, yield rate, contamination flag, flare, double process,
   double yield), end-to-end.
