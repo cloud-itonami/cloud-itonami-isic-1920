@@ -1,0 +1,43 @@
+;; What this vertical's robot physically does, declared for
+;; kotoba.robotics.process (kotoba-lang/robotics). `kbb -M:dev:physics` runs it.
+;;
+;; README "Robotics premise": an autonomous refinery-unit robot performs the
+;; physical actuation of a distillation/reformer unit (valve / heat input),
+;; gated by the Refinery Safety Governor and a human shift superintendent
+;; (ISIC 1920). The physical consequences of those two actuations: how the
+;; charge heater's tube wall responds to the heat input, how fast opening a
+;; draw-off valve pulls a reflux drum's level down against its inflow, and
+;; what the crude charge line costs in pressure at a given feed rate.
+;;
+;; Every number without a cited source is marked `estimate` in its :basis.
+;; Replacing an estimate with a sourced value is this bot's growth work.
+{:physics/schema "itonami.physical-ai.spec.v1"
+ :repo "cloud-itonami/cloud-itonami-isic-1920"
+ :cases
+ [{:id :charge-heater-tube-wall
+   :kind :thermal
+   :procedure "heat input raised on the crude charge heater: 12 mm steel tube wall between flue gas and 350 C oil; the oil-side wall temperature is judged"
+   :params {:thickness-m 0.012 :conductivity-w-mk 30.0 :density-kg-m3 7850.0 :specific-heat-j-kgk 500.0
+            :t0-c 350.0 :t-hot-c 900.0 :h-front-w-m2k 100.0 :t-back-ambient-c 350.0 :h-back-w-m2k 1500.0
+            :threshold-c 400.0 :duration-s 600.0 :nodes 11}
+   :sweep {:param :t-hot-c :values [700.0 800.0 900.0 1000.0 1100.0]}
+   :quantity :peak-back-c
+   :limit {:max 400.0 :basis "estimate: oil-film temperature above which heavy crude starts to coke on the tube wall, taken as 400 C"}
+   :boundary {:lo 600.0 :hi 1400.0}}
+  {:id :reflux-drum-draw-down
+   :kind :tank-drain
+   :procedure "robot opens the reflux drum's draw-off valve to pull the liquid level from 1.5 m to 0.4 m against the condensate inflow"
+   :params {:tank-area-m2 3.0 :h0-m 1.5 :h-target-m 0.4 :cd 0.62 :q-in-m3s 0.004 :dt-s 0.5 :max-time-s 7200.0}
+   :sweep {:param :orifice-area-m2 :values [0.002 0.003 0.004 0.006 0.008]}
+   :quantity :time-to-target-s
+   :limit {:max 900.0 :basis "estimate: level must be back in its normal band within 15 minutes of the high-level alarm"}
+   :boundary {:lo 0.0015 :hi 0.02}}
+  {:id :crude-charge-line
+   :kind :pipe-flow
+   :procedure "crude oil charge from the desalter to the heater pass inlet (300 mm line, 400 m, 10 m rise)"
+   :params {:diameter-m 0.30 :length-m 400.0 :roughness-m 4.5e-5 :density-kg-m3 870.0
+            :viscosity-pa-s 5.0e-3 :pump-efficiency 0.70 :elevation-m 10.0}
+   :sweep {:param :q-m3s :values [0.05 0.10 0.15 0.20 0.25]}
+   :quantity :pressure-drop-pa
+   :limit {:max 500000.0 :basis "estimate: 5 bar of line pressure budget between the charge pump discharge and the heater inlet"}
+   :boundary {:lo 0.02 :hi 0.6}}]}
